@@ -1,3 +1,23 @@
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function callMistral(prompt) {
+  const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: "mistral-small-latest",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" }
+    })
+  });
+  return response;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -31,32 +51,42 @@ Réponds UNIQUEMENT en JSON valide, sans balises markdown, exactement ce format 
   ]
 }`;
 
-  try {
-    const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${process.env.MISTRAL_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: "mistral-small-latest",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" }
-      })
-    });
+  const maxAttempts = 3;
+  let lastErrorText = "";
 
-    if (!response.ok) {
-      const err = await response.text();
-      return res.status(500).json({ error: "Mistral API error", detail: err });
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const response = await callMistral(prompt);
+
+      if (response.status === 429) {
+        lastErrorText = await response.text();
+        if (attempt < maxAttempts) {
+          await sleep(attempt * 3000); // 3s puis 6s
+          continue;
+        }
+        return res.status(429).json({
+          error: "Mistral rate limit",
+          detail: "Trop de requêtes sur le plan gratuit. Attends quelques secondes et réessaie.",
+          raw: lastErrorText
+        });
+      }
+
+      if (!response.ok) {
+        const err = await response.text();
+        return res.status(500).json({ error: "Mistral API error", detail: err });
+      }
+
+      const data = await response.json();
+      const text = data.choices?.[0]?.message?.content || "";
+      const clean = text.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      return res.status(200).json(parsed);
+
+    } catch (err) {
+      if (attempt === maxAttempts) {
+        return res.status(500).json({ error: "Server error", detail: err.message });
+      }
+      await sleep(attempt * 2000);
     }
-
-    const data = await response.json();
-    const text = data.choices?.[0]?.message?.content || "";
-    const clean = text.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(clean);
-    return res.status(200).json(parsed);
-
-  } catch (err) {
-    return res.status(500).json({ error: "Server error", detail: err.message });
   }
 }
