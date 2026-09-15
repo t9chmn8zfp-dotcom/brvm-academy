@@ -46,7 +46,10 @@ async function fetchQuiz(lessonTitle, moduleTitle) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ lessonTitle, moduleTitle }),
   });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`${res.status} — ${text}`);
+  }
   return res.json();
 }
 
