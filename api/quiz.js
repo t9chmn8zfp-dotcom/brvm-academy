@@ -3,7 +3,7 @@ function sleep(ms) {
 }
 
 async function callMistral(prompt) {
-  const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+  return fetch("https://api.mistral.ai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -15,10 +15,18 @@ async function callMistral(prompt) {
       response_format: { type: "json_object" }
     })
   });
-  return response;
 }
 
 export default async function handler(req, res) {
+  // CORS : autorise l'appel depuis un fichier local (origin "null") ou n'importe où
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
@@ -52,22 +60,16 @@ Réponds UNIQUEMENT en JSON valide, sans balises markdown, exactement ce format 
 }`;
 
   const maxAttempts = 3;
-  let lastErrorText = "";
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const response = await callMistral(prompt);
 
       if (response.status === 429) {
-        lastErrorText = await response.text();
-        if (attempt < maxAttempts) {
-          await sleep(attempt * 3000); // 3s puis 6s
-          continue;
-        }
+        if (attempt < maxAttempts) { await sleep(attempt * 3000); continue; }
         return res.status(429).json({
           error: "Mistral rate limit",
-          detail: "Trop de requêtes sur le plan gratuit. Attends quelques secondes et réessaie.",
-          raw: lastErrorText
+          detail: "Trop de requêtes sur le plan gratuit. Attends quelques secondes et réessaie."
         });
       }
 
